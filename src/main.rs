@@ -1,8 +1,10 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::io::Write;
+use bstr::ByteSlice;
 
 use clap::*;
 use itertools::Itertools;
@@ -306,6 +308,12 @@ impl MethodChaining for String {
     }
 }
 
+impl<'a> MethodChaining for Cow<'a, str> {
+    fn method_chain_counts(&self) -> Vec<usize> {
+        self.as_ref().method_chain_counts()
+    }
+}
+
 #[derive(Clap)]
 #[clap(version = crate_version!(), author = crate_authors!(), name = "method-chains")]
 pub struct Options {
@@ -355,8 +363,9 @@ pub fn process_project_dir(i: usize, total_projects: usize, project_name: &str, 
     
     java_paths.into_iter()
         .flat_map(|path| {
-            std::fs::read_to_string(&path)
+            std::fs::read(&path)                
                 .expect(&format!("Cannot read file {:?}", &path))
+                .to_str_lossy()
                 .method_chain_counts()
         })
         .fold(BTreeMap::new(), |mut accumulator, chain_length| {
