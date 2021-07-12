@@ -9,7 +9,5 @@ license = "MIT"
 
 [dependencies]
 clap = "3.0.0-beta.2"
-djanco = { git = "https://github.com/PRL-PRG/djanco", branch = "main" }
-djanco_ext = { git = "https://github.com/PRL-PRG/djanco_ext" }
 anyhow = "1.0.41"
 itertools = "0.10.1"
