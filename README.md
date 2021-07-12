@@ -13,7 +13,7 @@ cargo build --release
 ## Run
 
 ```
-cargo run -- --project-dir PROJECT_DIR_PATH --output-path OUTPUT_PATH
+cargo run --release -- --project-dir PROJECT_DIR_PATH --output-path OUTPUT_PATH
 ```
 
 Where `PROJECT_DIR_PATH` is a directory containing Java projects and `OUTPUT_PATH` is a CSV file where the histograms are written to.
