@@ -16,6 +16,9 @@ pub struct Options {
 
     #[clap(short = 'p', long = "project-dir", parse(from_os_str))]
     pub project_dir: PathBuf,
+
+    #[clap(short = 'r', long = "max-recursion-depth")]
+    pub max_recursion_depth: usize,
 }
 
 impl Options {
@@ -60,7 +63,7 @@ pub fn main() {
         let project_name = project_dir.file_name().unwrap().to_str().unwrap().to_owned();
         eprintln!("[{}/{}] processing project {}", i + 1, total_projects, project_name);
 
-        let histogram = process_project_dir(i, total_projects, &project_name, &project_dir)
+        let histogram = process_project_dir(i, total_projects, &project_name, &project_dir, config.max_recursion_depth)
             .into_iter()
             .sorted()
             .rev()
@@ -80,7 +83,7 @@ pub fn main() {
     eprintln!("Done.");
 }
 
-pub fn process_project_dir(i: usize, total_projects: usize, project_name: &str, project_dir: &PathBuf) -> BTreeMap<usize, usize> {
+pub fn process_project_dir(i: usize, total_projects: usize, project_name: &str, project_dir: &PathBuf, max_recursion_depth: usize) -> BTreeMap<usize, usize> {
     let java_paths = method_chains::read_dir_all(project_dir)
         .into_iter()
         .filter(|path| {
@@ -96,156 +99,22 @@ pub fn process_project_dir(i: usize, total_projects: usize, project_name: &str, 
     
     java_paths.into_iter()
         .flat_map(|path| {
-            std::fs::read(&path)                
+            let result = std::fs::read(&path)                
                 .expect(&format!("Cannot read file {:?}", &path))
                 .to_str_lossy()
-                .method_chain_counts()
+                .method_chain_counts(max_recursion_depth);
+            match result {
+                Err(error) => { 
+                    eprintln!("Failed to process file {:?}: {}", path, error);
+                    Vec::new()
+                }
+                Ok(method_chain_counts) => {
+                    method_chain_counts
+                }
+            }
         })
         .fold(BTreeMap::new(), |mut accumulator, chain_length| {
             *accumulator.entry(chain_length).or_insert(0) += 1;
             accumulator
         })
-}
-
-#[cfg(test)]
-mod tests { 
-    use std::iter::FromIterator;
-
-    use crate::*;
-
-    #[test]
-    fn test_comment_removal() {
-        let string = "// aaaaa\na/*   \n\n/**/*/b//c\nd";
-        assert_eq!(remove_comments(string), "a*/bd");
-    }
-
-    #[test]
-    fn test_tokenizer() {
-        let string = "a(); bb(); c.dddd().e(); main {}";
-        let tokens = vec![
-            Token::String/*("a".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("bb".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("c".to_owned())*/, Token::Dot, 
-            Token::String/*("dddd".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Dot, 
-            Token::String/*("e".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("main".to_owned())*/, Token::Punctuation/*('{')*/, Token::Punctuation/*('}')*/,
-        ];
-        assert_eq!(tokenize(string), tokens);
-    }
-
-
-    #[test]
-    fn test_chain1() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (1, 1)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-
-    #[test]
-    fn test_chain2() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (2, 1)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-    #[test]
-    fn test_chain3() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (3, 1)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-    #[test]
-    fn test_chain4() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (2, 1)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-    #[test]
-    fn test_chain5() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/,
-            Token::String, Token::OpenParen, Token::CloseParen
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (2, 1), (1, 1)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-
-    #[test]
-    fn test_chain6() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
-                           Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
-                           Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
-            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (2, 1), (1, 5)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
-
-    #[test]
-    fn test_chain7() {
-        let tokens = vec![
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, 
-                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-                                          Token::String, Token::Dot,
-                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-                                          Token::String, Token::Dot,
-                                          Token::String, Token::OpenParen, Token::CloseParen,               // 3
-                                          Token::CloseParen, Token::Punctuation/*(',')*/,                   // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
-                           Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
-                           Token::OpenBracket, 
-                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
-                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
-                           Token::CloseBracket,
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
-                           Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
-            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
-        ];
-        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
-            (3,1), (2, 1), (1, 7)
-        ].into_iter());
-        assert_eq!(sloppy_method_chain_detection(tokens), histogram);
-    }
 }

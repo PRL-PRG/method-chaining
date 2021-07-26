@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::iter::FromIterator;
 use std::path::PathBuf;
 
+use anyhow::bail;
+
 // fn is_keyword(string: &str) -> bool {
 //     match string {
 //         "abstract" => true,
@@ -83,7 +85,7 @@ use std::path::PathBuf;
 //     return true;
 // }
 
-fn remove_comments(contents: &str) -> String {
+pub(crate) fn remove_comments(contents: &str) -> String {
     #[derive(Debug)]
     enum State { Basic, SlashFound, LineComment, BlockComment, StarFoundInComment }
     let mut state = State::Basic;
@@ -190,17 +192,24 @@ pub fn tokenize(contents: &str) -> Vec<Token> {
 }
 
 #[allow(dead_code)]
-fn sloppy_method_chain_detection(tokens: Vec<Token>) -> BTreeMap<usize, usize> {
+fn sloppy_method_chain_detection(tokens: Vec<Token>, max_depth: usize) -> anyhow::Result<BTreeMap<usize, usize>> {
     let mut tokens = VecDeque::from_iter(tokens.into_iter());
-    let counters = sloppy_method_chain_detection_rec(&mut tokens);
-    counters.into_iter().fold(BTreeMap::new(), |mut accumulator, chain_length| {
+    let counters = sloppy_method_chain_detection_rec(&mut tokens, 0, max_depth)?;
+    let histogram = counters.into_iter().fold(BTreeMap::new(), |mut accumulator, chain_length| {
         *accumulator.entry(chain_length).or_insert(0) += 1;
         accumulator
-    })
+    });
+    Ok(histogram)
 }
 
 #[allow(unused_assignments)]
-fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>) -> Vec<usize> {
+fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>, depth: usize, max_depth: usize) -> anyhow::Result<Vec<usize>> {
+
+    if depth > max_depth {
+        bail!("Chain method detection reached recursion depth of {} (max: {}). 
+               Stopping recursion, keeping partial result.", depth, max_depth);
+        
+    }
 
     #[derive(Clone, Debug,PartialEq, Eq, PartialOrd, Ord)]
     enum State { Start, Potential, ParenEnd, Chain }
@@ -224,13 +233,13 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>) -> Vec<usize>
     macro_rules! stop {
         () => {
             chain_complete!();
-            return counters;
+            return Ok(counters);
         }
     }
 
     macro_rules! recurse {
         () => {{
-            let recursion_result = sloppy_method_chain_detection_rec(tokens);
+            let recursion_result = sloppy_method_chain_detection_rec(tokens, depth + 1, max_depth)?;
             counters.extend(recursion_result.into_iter());
         }}
     }
@@ -238,7 +247,6 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>) -> Vec<usize>
     while let Some(token) = tokens.pop_front() {
         //println!("{:?} {:?} counter={}, counters={:?}", state, token, counter, counters);
         match (&state, token) {
-            
 
             (State::Start, Token::OpenParen)        => { recurse!(); }
             (State::Start, Token::OpenBracket)      => { recurse!(); }
@@ -272,40 +280,41 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>) -> Vec<usize>
     }
     chain_complete!();
     //println!("counter={}, counters={:?}", counter, counters);
-    counters
+    Ok(counters)
 }
 
 pub trait MethodChaining {
-    fn method_chain_counts(&self) -> Vec<usize>;
-    fn method_chain_histogram(&self) -> BTreeMap<usize, usize> {
-        self.method_chain_counts()
+    fn method_chain_counts(&self, max_depth: usize) -> anyhow::Result<Vec<usize>>;
+    fn method_chain_histogram(&self, max_depth: usize) -> anyhow::Result<BTreeMap<usize, usize>> {
+        let histogram = self.method_chain_counts(max_depth)?
             .into_iter()
             .fold(BTreeMap::new(), |mut accumulator, chain_length| {
                 *accumulator.entry(chain_length).or_insert(0) += 1;
                 accumulator
-            })
+            });
+        Ok(histogram)
     }
 }
 
 impl MethodChaining for &str {
-    fn method_chain_counts(&self) -> Vec<usize> {
+    fn method_chain_counts(&self, max_depth: usize) -> anyhow::Result<Vec<usize>> {
         let clean = remove_comments(self);
         let tokens = tokenize(clean.as_str());
         let mut tokens = VecDeque::from_iter(tokens.into_iter());
-        let counters = sloppy_method_chain_detection_rec(&mut tokens);
+        let counters = sloppy_method_chain_detection_rec(&mut tokens, 0, max_depth);
         counters
     }
 }
 
 impl MethodChaining for String {
-    fn method_chain_counts(&self) -> Vec<usize> {
-        self.as_str().method_chain_counts()
+    fn method_chain_counts(&self, max_depth: usize) -> anyhow::Result<Vec<usize>> {
+        self.as_str().method_chain_counts(max_depth)
     }
 }
 
 impl<'a> MethodChaining for Cow<'a, str> {
-    fn method_chain_counts(&self) -> Vec<usize> {
-        self.as_ref().method_chain_counts()
+    fn method_chain_counts(&self, max_depth: usize) -> anyhow::Result<Vec<usize>> {
+        self.as_ref().method_chain_counts(max_depth)
     }
 }
 
@@ -326,3 +335,145 @@ pub fn read_dir_all(path: &PathBuf) -> Vec<PathBuf> {
 }
 
 
+#[cfg(test)]
+mod tests { 
+    use std::collections::BTreeMap;
+    use std::iter::FromIterator;
+    use crate::*;
+
+    #[test]
+    fn test_comment_removal() {
+        let string = "// aaaaa\na/*   \n\n/**/*/b//c\nd";
+        assert_eq!(remove_comments(string), "a*/bd");
+    }
+
+    #[test]
+    fn test_tokenizer() {
+        let string = "a(); bb(); c.dddd().e(); main {}";
+        let tokens = vec![
+            Token::String/*("a".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::String/*("bb".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::String/*("c".to_owned())*/, Token::Dot, 
+            Token::String/*("dddd".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Dot, 
+            Token::String/*("e".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::String/*("main".to_owned())*/, Token::Punctuation/*('{')*/, Token::Punctuation/*('}')*/,
+        ];
+        assert_eq!(tokenize(string), tokens);
+    }
+
+
+    #[test]
+    fn test_chain1() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, Token::CloseParen
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (1, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+
+    #[test]
+    fn test_chain2() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::String, Token::OpenParen, Token::CloseParen
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (2, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_chain3() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::String, Token::OpenParen, Token::CloseParen
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (3, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_chain4() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::String, Token::Dot,
+            Token::String, Token::OpenParen, Token::CloseParen
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (2, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_chain5() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::String, Token::Dot,
+            Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/,
+            Token::String, Token::OpenParen, Token::CloseParen
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (2, 1), (1, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+
+    #[test]
+    fn test_chain6() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, 
+                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::CloseParen, Token::Dot,
+            Token::String, Token::Dot,
+            Token::String, Token::OpenParen, 
+                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
+            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (2, 1), (1, 5)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_chain7() {
+        let tokens = vec![
+            Token::String, Token::OpenParen, 
+                           Token::String, Token::OpenParen, 
+                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+                                          Token::String, Token::Dot,
+                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
+                                          Token::String, Token::Dot,
+                                          Token::String, Token::OpenParen, Token::CloseParen,               // 3
+                                          Token::CloseParen, Token::Punctuation/*(',')*/,                   // 1
+                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::CloseParen, Token::Dot,
+            Token::String, Token::Dot,
+            Token::String, Token::OpenParen, 
+                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+                           Token::OpenBracket, 
+                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
+                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
+                           Token::CloseBracket,
+                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
+            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (3,1), (2, 1), (1, 7)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+}
