@@ -231,7 +231,7 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>, depth: usize,
     let mut counters: Vec<usize> = Vec::new();
 
     macro_rules! method_found {
-        () => { counter += 1; }
+        () => { counter += 1 }
     }
     macro_rules! chain_complete {
         () => { 
@@ -532,6 +532,10 @@ mod tests {
         "#;
         let expected = vec![1, 1, 2, 1, 1, 1, 3];
         let actual = program.method_chain_counts(10).unwrap();        
-        assert_eq!(expected, actual)
+        assert_eq!(expected, actual);
+
+        let expected = BTreeMap::from_iter(vec![(1, 5), (2, 1), (3, 1)].into_iter());
+        let actual = program.method_chain_histogram(10).unwrap();
+        assert_eq!(expected, actual);
     }
 }
