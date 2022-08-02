@@ -6,84 +6,84 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 
-// fn is_keyword(string: &str) -> bool {
-//     match string {
-//         "abstract" => true,
-//         "assert" => true,
-//         "boolean" => true,
-//         "break" => true,
-//         "byte" => true,
-//         "case" => true,
-//         "catch" => true,
-//         "char" => true,
-//         "class" => true,
-//         "const" => true,
-//         "continue" => true,
-//         "default" => true,
-//         "do" => true,
-//         "double" => true,
-//         "else" => true,
-//         "enum" => true,
-//         "exports" => true,
-//         "extends" => true,
-//         "final" => true,
-//         "finally" => true,
-//         "float" => true,
-//         "for" => true,
-//         "if" => true,
-//         "goto" => true,
-//         "implements" => true,
-//         "import" => true,
-//         "instanceof" => true,
-//         "int" => true,
-//         "interface" => true,
-//         "long" => true,
-//         "module" => true,
-//         "native" => true,
-//         "new" => true,
-//         "open" => true,
-//         "opens" => true,
-//         "package" => true,
-//         "private" => true,
-//         "protected" => true,
-//         "provides" => true,
-//         "public" => true,
-//         "requires" => true,
-//         "return" => true,
-//         "short" => true,
-//         "static" => true,
-//         "strictfp" => true,
-//         "super" => true,
-//         "switch" => true,
-//         "synchronized" => true,
-//         "this" => true,
-//         "throw" => true,
-//         "throws" => true,
-//         "to" => true,
-//         "transient" => true,
-//         "transitive" => true,
-//         "try" => true,
-//         "uses" => true,
-//         _ => false,
-//     }
-// }
+fn is_keyword(string: &str) -> bool {
+    match string {
+        "abstract" => true,
+        "assert" => true,
+        "boolean" => true,
+        "break" => true,
+        "byte" => true,
+        "case" => true,
+        "catch" => true,
+        "char" => true,
+        "class" => true,
+        "const" => true,
+        "continue" => true,
+        "default" => true,
+        "do" => true,
+        "double" => true,
+        "else" => true,
+        "enum" => true,
+        "exports" => true,
+        "extends" => true,
+        "final" => true,
+        "finally" => true,
+        "float" => true,
+        "for" => true,
+        "if" => true,
+        "goto" => true,
+        "implements" => true,
+        "import" => true,
+        "instanceof" => true,
+        "int" => true,
+        "interface" => true,
+        "long" => true,
+        "module" => true,
+        "native" => true,
+        "new" => true,
+        "open" => true,
+        "opens" => true,
+        "package" => true,
+        "private" => true,
+        "protected" => true,
+        "provides" => true,
+        "public" => true,
+        "requires" => true,
+        "return" => true,
+        "short" => true,
+        "static" => true,
+        "strictfp" => true,
+        "super" => true,
+        "switch" => true,
+        "synchronized" => true,
+        "this" => true,
+        "throw" => true,
+        "throws" => true,
+        "to" => true,
+        "transient" => true,
+        "transitive" => true,
+        "try" => true,
+        "uses" => true,
+        _ => false,
+    }
+}
 
-// fn is_identifier(token: &str) -> bool {
-//     if token.is_empty() {
-//         return false;
-//     }
+fn is_identifier(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
 
-//     // simplifed, lose definition, allows numbers in first position
-//     for character in token.chars() {
-//         match character {
-//             ch if ch.is_alphanumeric() => {} 
-//             '$' | '_' => {}
-//             _ => { return false }
-//         }
-//     }
+    // simplifed, lose definition, allows numbers in first position
+    for character in token.chars() {
+        match character {
+            ch if ch.is_alphabetic() => {} 
+            '$' | '_' => {}
+            _ => { return false }
+        }
+    }
 
-//     return true;
-// }
+    return true;
+}
 
 pub(crate) fn remove_comments(contents: &str) -> String {
     #[derive(Debug)]
@@ -125,6 +125,9 @@ pub enum Token {
     OpenBracket,
     CloseBracket,
     // End,
+    Keyword,
+    Identifier,
+    New,
 }
 
 pub fn tokenize(contents: &str) -> Vec<Token> {
@@ -133,7 +136,16 @@ pub fn tokenize(contents: &str) -> Vec<Token> {
     macro_rules! push { 
         (Token::String) => {
             if !token.is_empty() {
-                output.push(Token::String/*(token.clone())*/);
+                if token.as_str() == "new" {
+                    output.push(Token::New/*(token.clone())*/);                    
+                }
+                if is_keyword(token.as_str()) {
+                    output.push(Token::Keyword/*(token.clone())*/);
+                } else if is_identifier(token.as_str()) {
+                    output.push(Token::Identifier/*(token.clone())*/);
+                } else {
+                    output.push(Token::String)
+                }                
             }
             token.clear();
         };        
@@ -212,7 +224,7 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>, depth: usize,
     }
 
     #[derive(Clone, Debug,PartialEq, Eq, PartialOrd, Ord)]
-    enum State { Start, Potential, ParenEnd, Chain }
+    enum State { Start, Potential, ParenEnd, Chain, Constructor }
 
     let mut counter: usize = 0;
     let mut state = State::Start;
@@ -252,8 +264,12 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>, depth: usize,
             (State::Start, Token::OpenBracket)      => { recurse!(); }
             (State::Start, Token::CloseParen)       => { stop!(); }
             (State::Start, Token::CloseBracket)     => { stop!(); }            
-            (State::Start, Token::String)           => { state = State::Potential; }
+            (State::Start, Token::Identifier)       => { state = State::Potential; }
+            (State::Start, Token::New)              => { state = State::Constructor; }
             (State::Start, _)                       => { /*nothing*/ }
+
+            (State::Constructor, Token::OpenParen)  => { recurse!(); state = State::ParenEnd; /*not a method*/  }
+            (State::Constructor, _)                 => { /*nothing*/ }
 
             (State::Potential, Token::OpenParen)    => { recurse!(); state = State::ParenEnd; method_found!() }
             (State::Potential, Token::OpenBracket)  => { recurse!(); state = State::ParenEnd; /*not a method*/ }
@@ -273,7 +289,7 @@ fn sloppy_method_chain_detection_rec(tokens: &mut VecDeque<Token>, depth: usize,
             (State::Chain, Token::OpenBracket)      => { recurse!(); state = State::Start; }
             (State::Chain, Token::CloseParen)       => { stop!(); }
             (State::Chain, Token::CloseBracket)     => { stop!(); }
-            (State::Chain, Token::String)           => { state = State::Potential; }
+            (State::Chain, Token::Identifier)       => { state = State::Potential; }
             (State::Chain, _)                       => { state = State::Start; chain_complete!(); }
         }
         //println!(" => {:?} counter={}, counters={:?}", state, counter, counters);
@@ -349,14 +365,15 @@ mod tests {
 
     #[test]
     fn test_tokenizer() {
-        let string = "a(); bb(); c.dddd().e(); main {}";
+        let string = "a(); bb(); c.dddd().e(); main {}; if (x == 1)";
         let tokens = vec![
-            Token::String/*("a".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("bb".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("c".to_owned())*/, Token::Dot, 
-            Token::String/*("dddd".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Dot, 
-            Token::String/*("e".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
-            Token::String/*("main".to_owned())*/, Token::Punctuation/*('{')*/, Token::Punctuation/*('}')*/,
+            Token::Identifier/*("a".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::Identifier/*("bb".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::Identifier/*("c".to_owned())*/, Token::Dot, 
+            Token::Identifier/*("dddd".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Dot, 
+            Token::Identifier/*("e".to_owned())*/, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/, 
+            Token::Identifier/*("main".to_owned())*/, Token::Punctuation/*('{')*/, Token::Punctuation/*('}')*/, Token::Punctuation/*(';')*/, 
+            Token::Keyword/*("if".to_owned())*/, Token::OpenParen, Token::Identifier, Token::Punctuation, Token::Punctuation, Token::String, Token::CloseParen,
         ];
         assert_eq!(tokenize(string), tokens);
     }
@@ -365,7 +382,7 @@ mod tests {
     #[test]
     fn test_chain1() {
         let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen
+            Token::Identifier, Token::OpenParen, Token::CloseParen
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (1, 1)
@@ -377,8 +394,8 @@ mod tests {
     #[test]
     fn test_chain2() {
         let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::Identifier, Token::OpenParen, Token::CloseParen
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (2, 1)
@@ -389,9 +406,9 @@ mod tests {
     #[test]
     fn test_chain3() {
         let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::Identifier, Token::OpenParen, Token::CloseParen
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (3, 1)
@@ -402,9 +419,9 @@ mod tests {
     #[test]
     fn test_chain4() {
         let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::Identifier, Token::Dot,
+            Token::Identifier, Token::OpenParen, Token::CloseParen
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (2, 1)
@@ -415,10 +432,10 @@ mod tests {
     #[test]
     fn test_chain5() {
         let tokens = vec![
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/,
-            Token::String, Token::OpenParen, Token::CloseParen
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+            Token::Identifier, Token::Dot,
+            Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(';')*/,
+            Token::Identifier, Token::OpenParen, Token::CloseParen
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (2, 1), (1, 1)
@@ -430,16 +447,16 @@ mod tests {
     #[test]
     fn test_chain6() {
         let tokens = vec![
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+            Token::Identifier, Token::OpenParen, 
+                           Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+                           Token::Identifier, Token::OpenParen, Token::CloseParen,                              // 1
                            Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+            Token::Identifier, Token::Dot,
+            Token::Identifier, Token::OpenParen, 
+                           Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+                           Token::Identifier, Token::OpenParen, Token::CloseParen,                              // 1
                            Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
-            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
+            Token::Identifier, Token::OpenParen, Token::CloseParen                                              // 1
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (2, 1), (1, 5)
@@ -450,30 +467,71 @@ mod tests {
     #[test]
     fn test_chain7() {
         let tokens = vec![
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, 
-                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-                                          Token::String, Token::Dot,
-                                          Token::String, Token::OpenParen, Token::CloseParen, Token::Dot,
-                                          Token::String, Token::Dot,
-                                          Token::String, Token::OpenParen, Token::CloseParen,               // 3
+            Token::Identifier, Token::OpenParen, 
+                           Token::Identifier, Token::OpenParen, 
+                                          Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+                                          Token::Identifier, Token::Dot,
+                                          Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot,
+                                          Token::Identifier, Token::Dot,
+                                          Token::Identifier, Token::OpenParen, Token::CloseParen,               // 3
                                           Token::CloseParen, Token::Punctuation/*(',')*/,                   // 1
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::Identifier, Token::OpenParen, Token::CloseParen,                              // 1
                            Token::CloseParen, Token::Dot,
-            Token::String, Token::Dot,
-            Token::String, Token::OpenParen, 
-                           Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
+            Token::Identifier, Token::Dot,
+            Token::Identifier, Token::OpenParen, 
+                           Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation/*(',')*/, // 1
                            Token::OpenBracket, 
-                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
-                                Token::String, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
+                                Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
+                                Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Punctuation,     // 1
                            Token::CloseBracket,
-                           Token::String, Token::OpenParen, Token::CloseParen,                              // 1
+                           Token::Identifier, Token::OpenParen, Token::CloseParen,                              // 1
                            Token::CloseParen, Token::Punctuation/*(';')*/,                                  // 2
-            Token::String, Token::OpenParen, Token::CloseParen                                              // 1
+            Token::Identifier, Token::OpenParen, Token::CloseParen                                              // 1
         ];
         let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
             (3,1), (2, 1), (1, 7)
         ].into_iter());
         assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_chain8() {
+        let tokens = vec![
+            Token::New, Token::Identifier, Token::OpenParen, Token::CloseParen, Token::Dot, // 0
+            Token::Identifier, Token::Dot,                                                  // 0
+            Token::Identifier, Token::OpenParen, Token::CloseParen                          // 1
+        ];
+        let histogram: BTreeMap<usize, usize> = BTreeMap::from_iter(vec![
+            (1, 1)
+        ].into_iter());
+        assert_eq!(sloppy_method_chain_detection(tokens, 1000).unwrap(), histogram);
+    }
+
+    #[test]
+    fn test_everything() {
+        let program = r#"
+            List<String> list = new ArrayList();    // Should not be counted
+            list.add(
+                createRandomString()                // Length = 1
+            );                                      // Length = 1
+            list.stream().map(s -> {
+                return s.replace("foo", "bar")
+                        .replace("baz", "qux");     // Length = 2
+            }).forEach(s ->
+                String output = String.format(
+                    "%d lines",
+                    s.split("\n"). length           // Length = 1
+                );                                  // Length = 1
+                System.out.println(output );        // Length = 1
+            );                                      // Length = 3
+            if ((x == 0) == (y == 1)) {
+
+            } else {
+
+            }
+        "#;
+        let expected = vec![1, 1, 2, 1, 1, 1, 3];
+        let actual = program.method_chain_counts(10).unwrap();        
+        assert_eq!(expected, actual)
     }
 }
