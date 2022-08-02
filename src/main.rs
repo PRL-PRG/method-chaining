@@ -8,7 +8,7 @@ use itertools::Itertools;
 
 use method_chains::MethodChaining;
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version = crate_version!(), author = crate_authors!(), name = "method-chains")]
 pub struct Options {
     #[clap(short = 'o', long = "output-path", parse(from_os_str))]
